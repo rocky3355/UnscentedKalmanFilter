@@ -81,12 +81,8 @@ void UKF::ProcessMeasurement(MeasurementPackage meas_package) {
     time_us_ = meas_package.timestamp_;
     Prediction(dt);
 
-    if (meas_package.sensor_type_ == MeasurementPackage::LASER) {
-        UpdateLidar(meas_package);
-    }
-    else {
-        UpdateRadar(meas_package);
-    }
+    int n_z = (int)meas_package.sensor_type_;
+    UpdateLaserOrRadar(meas_package, n_z);
 }
 
 /**
@@ -188,24 +184,33 @@ void UKF::Prediction(double delta_t) {
     }
 }
 
-void UKF::Update(MeasurementPackage meas_package, int n_z) {
-
-}
-
-/**
-* Updates the state and the state covariance matrix ustd::sing a laser measurement.
-* @param {MeasurementPackage} meas_package
-*/
-void UKF::UpdateLidar(MeasurementPackage meas_package) {
-    int n_z = 2;
+void UKF::UpdateLaserOrRadar(MeasurementPackage meas_package, int n_z) {
     Eigen::VectorXd z = meas_package.raw_measurements_;
     Eigen::MatrixXd Zsig = Eigen::MatrixXd(n_z, n_sig_);
+    Eigen::MatrixXd R = Eigen::MatrixXd(n_z, n_z);
 
-    for (uint i = 0; i < n_sig_; i++) {
-        double p_x = Xsig_pred_(0, i);
-        double p_y = Xsig_pred_(1, i);
-        Zsig(0, i) = p_x;
-        Zsig(1, i) = p_y;
+    if (meas_package.sensor_type_ == MeasurementPackage::LASER) {
+        for (uint i = 0; i < n_sig_; i++) {
+            double p_x = Xsig_pred_(0, i);
+            double p_y = Xsig_pred_(1, i);
+            Zsig(0, i) = p_x;
+            Zsig(1, i) = p_y;
+        }
+    }
+    else {
+        for (uint i = 0; i < n_sig_; i++) {
+            double p_x = Xsig_pred_(0, i);
+            double p_y = Xsig_pred_(1, i);
+            double v = Xsig_pred_(2, i);
+            double yaw = Xsig_pred_(3, i);
+
+            double v1 = std::cos(yaw) * v;
+            double v2 = std::sin(yaw) * v;
+
+            Zsig(0, i) = std::sqrt(p_x * p_x + p_y * p_y);
+            Zsig(1, i) = std::atan2(p_y, p_x);
+            Zsig(2, i) = (p_x * v1 + p_y * v2) / std::sqrt(p_x * p_x + p_y * p_y);
+        }
     }
 
     Eigen::VectorXd z_pred = Eigen::VectorXd(n_z);
@@ -221,73 +226,19 @@ void UKF::UpdateLidar(MeasurementPackage meas_package) {
         S = S + weights_(i) * z_diff * z_diff.transpose();
     }
 
-    Eigen::MatrixXd R = Eigen::MatrixXd(n_z, n_z);
-    R << std_laspx_ * std_laspx_, 0,
+    if (meas_package.sensor_type_ == MeasurementPackage::LASER) {
+        R << std_laspx_ * std_laspx_, 0,
         0, std_laspy_ * std_laspy_;
-    S = S + R;
-
-    Eigen::MatrixXd Tc = Eigen::MatrixXd(n_x_, n_z);
-
-    // Lidar update
-    Tc.fill(0.0);
-    for (uint i = 0; i < n_sig_; i++) {
-        Eigen::VectorXd z_diff = Zsig.col(i) - z_pred;
-        Eigen::VectorXd x_diff = Xsig_pred_.col(i) - x_;
-        Tc = Tc + weights_(i) * x_diff * z_diff.transpose();
     }
-
-    Eigen::MatrixXd K = Tc * S.inverse();
-    Eigen::VectorXd z_diff = z - z_pred;
-
-    x_ = x_ + K * z_diff;
-    P_ = P_ - K * S * K.transpose();
-}
-
-/**
-* Updates the state and the state covariance matrix ustd::sing a radar measurement.
-* @param {MeasurementPackage} meas_package
-*/
-void UKF::UpdateRadar(MeasurementPackage meas_package) {
-    int n_z = 3;
-    Eigen::VectorXd z = meas_package.raw_measurements_;
-    Eigen::MatrixXd Zsig = Eigen::MatrixXd(n_z, n_sig_);
-
-    for (uint i = 0; i < n_sig_; i++) {
-        double p_x = Xsig_pred_(0, i);
-        double p_y = Xsig_pred_(1, i);
-        double v = Xsig_pred_(2, i);
-        double yaw = Xsig_pred_(3, i);
-
-        double v1 = std::cos(yaw) * v;
-        double v2 = std::sin(yaw) * v;
-
-        Zsig(0, i) = std::sqrt(p_x * p_x + p_y * p_y);
-        Zsig(1, i) = atan2(p_y, p_x);
-        Zsig(2, i) = (p_x * v1 + p_y * v2) / std::sqrt(p_x * p_x + p_y * p_y);
-    }
-
-    Eigen::VectorXd z_pred = Eigen::VectorXd(n_z);
-    z_pred.fill(0.0);
-    for (uint i = 0; i < n_sig_; i++) {
-        z_pred = z_pred + weights_(i) * Zsig.col(i);
-    }
-
-    Eigen::MatrixXd S = Eigen::MatrixXd(n_z, n_z);
-    S.fill(0.0);
-    for (uint i = 0; i < n_sig_; i++) {
-        Eigen::VectorXd z_diff = Zsig.col(i) - z_pred;
-        S = S + weights_(i) * z_diff * z_diff.transpose();
-    }
-
-    Eigen::MatrixXd R = Eigen::MatrixXd(n_z, n_z);
-    R << std_radr_ * std_radr_, 0, 0,
+    else {
+        R << std_radr_ * std_radr_, 0, 0,
         0, std_radphi_ * std_radphi_, 0,
         0, 0, std_radrd_ * std_radrd_;
+    }
+
     S = S + R;
 
     Eigen::MatrixXd Tc = Eigen::MatrixXd(n_x_, n_z);
-
-    // Radar update
     Tc.fill(0.0);
     for (uint i = 0; i < n_sig_; i++) {
         Eigen::VectorXd z_diff = Zsig.col(i) - z_pred;
