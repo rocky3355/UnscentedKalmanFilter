@@ -54,26 +54,34 @@ UKF::~UKF() {}
 */
 void UKF::ProcessMeasurement(MeasurementPackage meas_package) {
     if (!is_initialized_) {
-        x_ << 1, 1, 1, 1, 0.1;
-        P_ << 0.15, 0, 0, 0, 0,
-            0, 0.15, 0, 0, 0,
-            0, 0, 1, 0, 0,
-            0, 0, 0, 1, 0,
-            0, 0, 0, 0, 1;
+        P_ << 1, 0, 0, 0, 0,
+              0, 1, 0, 0, 0,
+              0, 0, 1, 0, 0,
+              0, 0, 0, 1, 0,
+              0, 0, 0, 0, 1;
 
         if (meas_package.sensor_type_ == MeasurementPackage::LASER) {
-            x_(0) = meas_package.raw_measurements_(0);
-            x_(1) = meas_package.raw_measurements_(1);
+            double x = meas_package.raw_measurements_(0);
+            double y = meas_package.raw_measurements_(1);
+            x_ << x, y, 0, 0, 0;
         }
         else {
-            double ro = meas_package.raw_measurements_(0);
+            double rho = meas_package.raw_measurements_(0);
             double phi = meas_package.raw_measurements_(1);
-            x_(0) = ro * std::cos(phi);
-            x_(1) = ro * std::sin(phi);
+            double rho_dot = meas_package.raw_measurements_(2);
+            double sin_phi = std::sin(phi);
+            double cos_phi = std::cos(phi);
+
+            double x = rho * cos_phi;
+            double y = rho * sin_phi;
+            double v_x = rho_dot * cos_phi;
+            double v_y = rho_dot * sin_phi;
+            double v = std::sqrt(v_x * v_x + v_y * v_y);
+            x_ << x, y, v, 0, 0;
         }
 
-        is_initialized_ = true;
         time_us_ = meas_package.timestamp_;
+        is_initialized_ = true;
         return;
     }
 
@@ -165,19 +173,20 @@ void UKF::Prediction(double delta_t) {
     }
 
     // Convert sigma points
+    x_.fill(0.0);
+    P_.fill(0.0);
     double weight_0 = lambda_ / (lambda_ + n_aug_);
     weights_(0) = weight_0;
-    for (uint i = 1; i < n_sig_; i++) {
-        double weight = 0.5 / (n_aug_ + lambda_);
-        weights_(i) = weight;
-    }
-
-    x_.fill(0.0);
+    
     for (uint i = 0; i < n_sig_; i++) {
+        if (i > 0) {
+            double weight = 0.5 / (n_aug_ + lambda_);
+            weights_(i) = weight;
+        }
         x_ = x_ + weights_(i) * Xsig_pred_.col(i);
     }
 
-    P_.fill(0.0);
+    
     for (uint i = 0; i < n_sig_; i++) {
         Eigen::VectorXd x_diff = Xsig_pred_.col(i) - x_;
         P_ = P_ + weights_(i) * x_diff * x_diff.transpose();
